@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Ghost Outer Shell Gradient -->
+    <linearGradient id="ghostGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="35%" stop-color="#e0f2fe"/>
+      <stop offset="75%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+
+    <!-- Glowing Rim Gradient -->
+    <linearGradient id="rimGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f5ff"/>
+      <stop offset="50%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+
+    <!-- Inner Dark Face Visor Mask -->
+    <linearGradient id="faceGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0b132b"/>
+      <stop offset="100%" stop-color="#030712"/>
+    </linearGradient>
+
+    <!-- Soft Ambient Glow / Drop Shadow -->
+    <filter id="ghostGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#00f5ff" flood-opacity="0.32"/>
+    </filter>
+
+    <!-- Eye Laser / Neon Bloom -->
+    <filter id="eyeGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Perfectly Centered Mascot Group (dx=+16, dy=+22) -->
+  <g filter="url(#ghostGlow)" transform="translate(16, 22)">
+    <!-- OUTER GLOWING SOUL AURA / RIM -->
+    <path d="M 240 40 C 130 40, 70 120, 70 230 L 70 380 C 70 420, 110 440, 140 410 C 170 380, 200 420, 240 420 C 280 420, 310 380, 340 410 C 370 440, 410 420, 410 380 L 410 230 C 410 120, 350 40, 240 40 Z" fill="url(#rimGrad)"/>
+
+    <!-- MAIN GHOST BODY (Crisp white to azure-cyan) -->
+    <path d="M 240 56 C 145 56, 90 128, 90 230 L 90 365 C 90 395, 120 410, 145 385 C 175 355, 205 395, 240 395 C 275 395, 305 355, 335 385 C 360 410, 390 395, 390 365 L 390 230 C 390 128, 335 56, 240 56 Z" fill="url(#ghostGrad)"/>
+
+    <!-- INNER DARK FACE VISOR -->
+    <path d="M 240 140 C 180 140, 140 175, 140 225 C 140 275, 180 300, 240 300 C 300 300, 340 275, 340 225 C 340 175, 300 140, 240 140 Z" fill="url(#faceGrad)"/>
+
+    <!-- GLOWING GAMING / LAUNCHER EYES -->
+    <g filter="url(#eyeGlow)">
+      <!-- Left Eye: Diamond Chevron `>` -->
+      <polygon points="190,195 220,215 190,235 180,225 200,215 180,205" fill="#00f5ff"/>
+      <!-- Right Eye: Soul Core Diamond `◇` -->
+      <polygon points="275,215 290,195 305,215 290,235" fill="#00f5ff"/>
+      <circle cx="290" cy="215" r="4" fill="#ffffff"/>
+    </g>
+  </g>
+</svg>

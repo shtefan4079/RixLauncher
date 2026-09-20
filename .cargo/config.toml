@@ -1,0 +1,5 @@
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-rdynamic"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-args=-static -mwindows"]

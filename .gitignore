@@ -1,0 +1,24 @@
+# Rust build artifacts
+/target
+
+# App local runtime data
+/.rixlauncher
+.rixlauncher/
+
+# Logs and crash dumps
+*.log
+crash.log
+*crash*.txt
+
+# Temporary archives and scratch files
+*.zip
+*.tar.gz
+scratch/
+
+# IDE and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
