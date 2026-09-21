@@ -35,11 +35,19 @@ pub fn view_main(launcher: &RixLauncher) -> Element<'_, Message> {
             ..Default::default()
         });
 
-    // 2. Dynamic monochromatic noise overlay for authentic frosted glass feel
+    // 2. Static monochromatic grain underneath the controls.
     let noise_panel = iced::widget::image(launcher.noise_image.clone())
         .width(iced::Length::Fill)
         .height(iced::Length::Fill)
         .content_fit(iced::ContentFit::None);
+
+    #[cfg(target_os = "windows")]
+    let noise_panel = noise_panel
+        // Cover large/maximized windows too; nearest sampling keeps the fine
+        // grain visible instead of averaging it away at fractional DPI scales.
+        .content_fit(iced::ContentFit::Cover)
+        .filter_method(iced::widget::image::FilterMethod::Nearest)
+        .border_radius(radius);
 
     // 3. Layout and controls overlay
     let content_panel = if navigation::is_sidebar(launcher) {

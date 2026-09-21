@@ -95,14 +95,15 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     {
-        // On Windows, wgpu defaults to DX12 which creates DXGI swapchains with
-        // DXGI_ALPHA_MODE_IGNORE (iced issue #2525), forcing transparent windows to render
-        // as solid opaque black and preventing DWM Acrylic/blur from showing through.
-        // tiny-skia uses software rasterization via softbuffer/GDI, providing 100% reliable
-        // window alpha transparency and seamless compositing with Windows DWM Acrylic glass.
-        if std::env::var("ICED_BACKEND").is_err() && std::env::var("WGPU_BACKEND").is_err() {
+        // DX12's HWND swapchain is opaque, and tiny-skia/softbuffer does not
+        // guarantee window alpha. Prefer Vulkan so the translucent UI can
+        // expose DWM blur, retaining iced's software fallback if unavailable.
+        // Respect explicit renderer/backend overrides.
+        if std::env::var_os("ICED_BACKEND").is_none() && std::env::var_os("WGPU_BACKEND").is_none()
+        {
+            // SAFETY: startup is still single-threaded, before iced/Tokio.
             unsafe {
-                std::env::set_var("ICED_BACKEND", "tiny-skia");
+                std::env::set_var("WGPU_BACKEND", "vulkan");
             }
         }
     }
@@ -123,7 +124,7 @@ fn main() {
     if let Err(e) = run_res {
         write_diagnostic(format!("Transparent window failed: {:?}\n", e).as_bytes());
 
-        // Fallback to an opaque window on compositors that reject transparency.
+        // Retry without the compositor's built-in blur request.
         let run_res2 = iced::application(RixLauncher::new, RixLauncher::update, RixLauncher::view)
             .title(title)
             .window(window_settings(true, false))
@@ -132,7 +133,9 @@ fn main() {
             .run();
 
         if let Err(e2) = run_res2 {
-            write_diagnostic(format!("Opaque window failed: {:?}\n", e2).as_bytes());
+            write_diagnostic(
+                format!("Transparent window without blur failed: {:?}\n", e2).as_bytes(),
+            );
 
             let run_res3 =
                 iced::application(RixLauncher::new, RixLauncher::update, RixLauncher::view)

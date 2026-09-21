@@ -148,11 +148,17 @@ fn generate_noise_rgba(width: usize, height: usize) -> Vec<u8> {
     for _ in 0..(width * height) {
         seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
         let rand_val = ((seed / 65536) % 256) as u8;
-        buffer.push(rand_val); // R
-        buffer.push(rand_val); // G
-        buffer.push(rand_val); // B
-        let alpha = rand_val % 3; // extremely subtle grain: 0, 1, or 2
-        buffer.push(alpha); // A
+        #[cfg(target_os = "windows")]
+        {
+            // DWM's plain blur lacks KWin's additive grain. Approximate it
+            // with fine white speckles at 0–3% opacity, below the UI controls.
+            // The old gray pixels at 0–2/255 alpha were effectively invisible.
+            buffer.extend_from_slice(&[255, 255, 255, rand_val % 9]);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            buffer.extend_from_slice(&[rand_val, rand_val, rand_val, rand_val % 3]);
+        }
     }
     buffer
 }
@@ -3488,7 +3494,7 @@ fn apply_window_platform_task(
             use raw_window_handle::RawWindowHandle;
             if let Ok(window_handle) = window.window_handle() {
                 if let RawWindowHandle::Win32(window_win32) = window_handle.as_raw() {
-                    unsafe { apply_windows_blur(window_win32.hwnd.get() as *mut _) };
+                    unsafe { apply_windows_blur(window_win32.hwnd.get() as *mut _, radius) };
                 }
             }
         }
@@ -3497,24 +3503,9 @@ fn apply_window_platform_task(
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn apply_windows_blur(hwnd: *mut std::ffi::c_void) {
+unsafe fn apply_windows_blur(hwnd: *mut std::ffi::c_void, radius: i32) {
     use std::ffi::c_void;
-
-    #[repr(C)]
-    struct Margins {
-        cx_left_width: i32,
-        cx_right_width: i32,
-        cy_top_height: i32,
-        cy_bottom_height: i32,
-    }
-
-    #[repr(C)]
-    struct DwmBlurBehind {
-        dw_flags: u32,
-        f_enable: i32,
-        h_rgn_blur: *mut c_void,
-        f_transition_on_maximized: i32,
-    }
+    use std::sync::OnceLock;
 
     #[repr(C)]
     struct AccentPolicy {
@@ -3533,8 +3524,6 @@ unsafe fn apply_windows_blur(hwnd: *mut std::ffi::c_void) {
 
     #[link(name = "dwmapi")]
     unsafe extern "system" {
-        fn DwmExtendFrameIntoClientArea(hwnd: *mut c_void, margins: *const Margins) -> i32;
-        fn DwmEnableBlurBehindWindow(hwnd: *mut c_void, p_blur_behind: *const DwmBlurBehind) -> i32;
         fn DwmSetWindowAttribute(
             hwnd: *mut c_void,
             attribute: u32,
@@ -3545,119 +3534,83 @@ unsafe fn apply_windows_blur(hwnd: *mut std::ffi::c_void) {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        fn LoadLibraryA(name: *const u8) -> *mut c_void;
+        fn GetModuleHandleA(name: *const u8) -> *mut c_void;
         fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
     }
 
-    // 1. Clear any legacy empty-region BlurBehind set by winit transparent initialization,
-    // so DWM's backdrop system can render unimpeded.
-    let clear_bb = DwmBlurBehind {
-        dw_flags: 1, // DWM_BB_ENABLE
-        f_enable: 0,
-        h_rgn_blur: std::ptr::null_mut(),
-        f_transition_on_maximized: 0,
-    };
-    let _ = unsafe { DwmEnableBlurBehindWindow(hwnd, &clear_bb) };
-
-    // 2. Extend the DWM frame into the entire client area (-1 margins).
-    // This allows DWM backdrop effects (Acrylic/Blur) to paint across the full client window.
-    let margins = Margins {
-        cx_left_width: -1,
-        cx_right_width: -1,
-        cy_top_height: -1,
-        cy_bottom_height: -1,
-    };
-    let _ = unsafe { DwmExtendFrameIntoClientArea(hwnd, &margins) };
-
-    // 3. Request dark mode composition (DWMWA_USE_IMMERSIVE_DARK_MODE = 20)
-    let dark_mode: u32 = 1;
+    // winit keeps WS_CAPTION for native snap/maximize behavior even with
+    // decorations=false, hiding it via WM_NCCALCSIZE. Extending the DWM frame
+    // into that client area paints a second caption over our own title bar.
+    // Leave its frame and DwmEnableBlurBehindWindow transparency setup intact.
+    // Also suppress the extra Windows 11 outline: iced already draws the edge.
+    const DWMWA_BORDER_COLOR: u32 = 34;
+    const DWMWA_COLOR_NONE: u32 = 0xffff_fffe;
     let _ = unsafe {
         DwmSetWindowAttribute(
             hwnd,
-            20,
-            &dark_mode as *const u32 as *const _,
+            DWMWA_BORDER_COLOR,
+            &DWMWA_COLOR_NONE as *const u32 as *const _,
             std::mem::size_of::<u32>() as u32,
         )
     };
 
-    // 4. Request rounded corners (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2)
-    let corner_preference: u32 = 2;
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_DONOTROUND: u32 = 1;
+    const DWMWCP_ROUND: u32 = 2;
+    let corner_preference = if radius > 0 {
+        DWMWCP_ROUND
+    } else {
+        DWMWCP_DONOTROUND
+    };
     let _ = unsafe {
         DwmSetWindowAttribute(
             hwnd,
-            33,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
             &corner_preference as *const u32 as *const _,
             std::mem::size_of::<u32>() as u32,
         )
     };
 
-    // 5. On Windows 11 (22H2+ build 22621+): Request true Acrylic frosted glass (DWMSBT_TRANSIENTWINDOW = 3)
-    // DWMWA_SYSTEMBACKDROP_TYPE = 38
-    let backdrop_acrylic: u32 = 3;
-    let result = unsafe {
-        DwmSetWindowAttribute(
-            hwnd,
-            38,
-            &backdrop_acrylic as *const u32 as *const _,
-            std::mem::size_of::<u32>() as u32,
-        )
-    };
-
-    // If DWM Acrylic backdrop is not supported (Windows 11 21H2 build 22000, or Windows 10):
-    if result != 0 {
-        // Try Windows 11 21H2 undocumented Mica/Acrylic (DWMWA_MICA_EFFECT = 1029)
-        let mica_on: u32 = 1;
-        let _ = unsafe {
-            DwmSetWindowAttribute(
-                hwnd,
-                1029,
-                &mica_on as *const u32 as *const _,
-                std::mem::size_of::<u32>() as u32,
-            )
+    // Plain blur-behind matches KWin: the shared UI supplies the tint/noise.
+    // Acrylic/Mica add their own tint and may become opaque on focus changes.
+    // Resolve the Windows 10/11 accent API once without leaking a DLL reference
+    // on every resize (user32 is already loaded by the windowing backend).
+    type SetWindowCompositionAttributeFn =
+        unsafe extern "system" fn(*mut c_void, *mut WindowCompositionAttributeData) -> i32;
+    static SET_WCA: OnceLock<Option<SetWindowCompositionAttributeFn>> = OnceLock::new();
+    let set_wca = SET_WCA.get_or_init(|| unsafe {
+        let user32 = GetModuleHandleA(c"user32.dll".as_ptr().cast());
+        if user32.is_null() {
+            return None;
+        }
+        let proc = GetProcAddress(user32, c"SetWindowCompositionAttribute".as_ptr().cast());
+        if proc.is_null() {
+            eprintln!("[RixLauncher] Windows blur API is unavailable.");
+            None
+        } else {
+            // SAFETY: this export has the ABI and signature declared above.
+            Some(std::mem::transmute::<
+                *mut c_void,
+                SetWindowCompositionAttributeFn,
+            >(proc))
+        }
+    });
+    if let Some(set_wca) = set_wca {
+        let mut policy = AccentPolicy {
+            accent_state: 3,   // ACCENT_ENABLE_BLURBEHIND
+            accent_flags: 2,   // use gradient_color, without native border flags
+            gradient_color: 0, // no additional tint over the shared KDE styling
+            animation_id: 0,
         };
-
-        // Also apply SetWindowCompositionAttribute (Windows 10 v1809+ Acrylic / BlurBehind)
-        let user32 = unsafe { LoadLibraryA(b"user32.dll\0".as_ptr()) };
-        if !user32.is_null() {
-            let proc = unsafe { GetProcAddress(user32, b"SetWindowCompositionAttribute\0".as_ptr()) };
-            if !proc.is_null() {
-                type SetWindowCompositionAttributeFn = unsafe extern "system" fn(
-                    *mut c_void,
-                    *mut WindowCompositionAttributeData,
-                ) -> i32;
-                let set_wca: SetWindowCompositionAttributeFn = unsafe { std::mem::transmute(proc) };
-
-                // AccentState: 4 = ACCENT_ENABLE_ACRYLICBLURBEHIND
-                // AccentFlags: 0 for Acrylic (per window-vibrancy specification)
-                // GradientColor: ABGR format with subtle tint (0x9918181b = ~60% dark tint)
-                let mut policy_acrylic = AccentPolicy {
-                    accent_state: 4,
-                    accent_flags: 0,
-                    gradient_color: 0x9918181b,
-                    animation_id: 0,
-                };
-                let mut data_acrylic = WindowCompositionAttributeData {
-                    attribute: 19, // WCA_ACCENT_POLICY
-                    data: &mut policy_acrylic as *mut AccentPolicy as *mut _,
-                    size_of_data: std::mem::size_of::<AccentPolicy>(),
-                };
-                let wca_res = unsafe { set_wca(hwnd, &mut data_acrylic) };
-                if wca_res != 0 {
-                    // Fallback to classic blurbehind (accent_state = 3, accent_flags = 2)
-                    let mut policy_blur = AccentPolicy {
-                        accent_state: 3,
-                        accent_flags: 2,
-                        gradient_color: 0,
-                        animation_id: 0,
-                    };
-                    let mut data_blur = WindowCompositionAttributeData {
-                        attribute: 19,
-                        data: &mut policy_blur as *mut AccentPolicy as *mut _,
-                        size_of_data: std::mem::size_of::<AccentPolicy>(),
-                    };
-                    unsafe { set_wca(hwnd, &mut data_blur) };
-                }
-            }
+        let mut data = WindowCompositionAttributeData {
+            attribute: 19, // WCA_ACCENT_POLICY
+            data: &mut policy as *mut AccentPolicy as *mut _,
+            size_of_data: std::mem::size_of::<AccentPolicy>(),
+        };
+        // Unlike DwmSetWindowAttribute's HRESULT, this API returns a BOOL:
+        // zero is failure, nonzero is success.
+        if unsafe { set_wca(hwnd, &mut data) } == 0 {
+            eprintln!("[RixLauncher] Windows blur could not be enabled.");
         }
     }
 }
