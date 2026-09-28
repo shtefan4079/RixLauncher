@@ -17,6 +17,7 @@ pub fn launch_instance(
     is_microsoft: bool,
     extra_jvm_args: &str,
     extra_game_args: &str,
+    prefer_discrete_gpu: bool,
     java_path: &str,
     memory_gb: f32,
     game_root: &str,
@@ -298,6 +299,7 @@ pub fn launch_instance(
 
     // 8. Launch!
     let mut command = Command::new(java_path);
+    configure_graphics_preference(&mut command, prefer_discrete_gpu);
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -343,6 +345,17 @@ pub fn launch_instance(
     command
         .spawn()
         .map_err(|e| format!("Could not start Java: {e}"))
+}
+
+fn configure_graphics_preference(command: &mut Command, prefer_discrete_gpu: bool) {
+    #[cfg(target_os = "linux")]
+    if prefer_discrete_gpu {
+        // Mesa selects the alternate GPU for the child even when the launcher
+        // itself was started on the integrated GPU.
+        command.env("DRI_PRIME", "1");
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (command, prefer_discrete_gpu);
 }
 
 fn loader_profile_matches_loader(profile: &LoaderProfile, loader: &str) -> bool {
@@ -505,5 +518,22 @@ mod tests {
     fn extra_arguments_report_unfinished_quotes() {
         assert!(split_command_line("--flag \"unfinished").is_err());
         assert!(split_command_line("--flag\\").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn discrete_gpu_preference_is_set_on_java_process() {
+        use super::configure_graphics_preference;
+        use std::ffi::OsStr;
+        use std::process::Command;
+
+        let mut command = Command::new("java");
+        configure_graphics_preference(&mut command, true);
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new("DRI_PRIME")),
+            Some((OsStr::new("DRI_PRIME"), Some(OsStr::new("1"))))
+        );
     }
 }

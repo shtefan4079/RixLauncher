@@ -285,6 +285,7 @@ pub enum Message {
     MicrosoftLoginPollTick,
     ExtraJvmArgsChanged(String),
     ExtraGameArgsChanged(String),
+    PreferDiscreteGpuChanged(bool),
     NavLayoutChanged(NavLayout),
     LocalModIconsLoaded(usize, Result<HashMap<String, Vec<u8>>, String>),
     CopyMicrosoftUserCode,

@@ -436,6 +436,44 @@ pub fn view_settings(launcher: &RixLauncher) -> Element<'_, Message> {
     .width(Length::Fill)
     .style(|_| card_style());
 
+    #[cfg(target_os = "linux")]
+    let gpu_card = {
+        let prefer_discrete_gpu = launcher.prefer_discrete_gpu;
+        container(
+            column![
+                text("Minecraft graphics device")
+                    .size(14)
+                    .bold()
+                    .color(Color::WHITE),
+                text("Choose the GPU for new game processes. The launcher can stay on the integrated GPU.")
+                    .size(11)
+                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.50)),
+                row![
+                    Button::new(text("System default").size(12))
+                        .on_press(Message::PreferDiscreteGpuChanged(false))
+                        .style(move |_, status| {
+                            nav_tab_button_style(status, !prefer_discrete_gpu)
+                        })
+                        .width(Length::Fill)
+                        .height(Length::Fixed(34.0)),
+                    Button::new(text("Discrete GPU").size(12))
+                        .on_press(Message::PreferDiscreteGpuChanged(true))
+                        .style(move |_, status| nav_tab_button_style(status, prefer_discrete_gpu))
+                        .width(Length::Fill)
+                        .height(Length::Fixed(34.0)),
+                ]
+                .spacing(8),
+                text("Discrete GPU sets DRI_PRIME=1 for Minecraft; do not put it in Game Arguments.")
+                    .size(10)
+                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.40)),
+            ]
+            .spacing(10),
+        )
+        .padding(18)
+        .width(Length::Fill)
+        .style(|_| card_style())
+    };
+
     // 5. System Integration Card
     let system_card = container(
         column![
@@ -476,17 +514,23 @@ pub fn view_settings(launcher: &RixLauncher) -> Element<'_, Message> {
     .style(|_| card_style());
 
     // Layout assembly: constrained to max-width 780, centered
-    let content = column![
+    #[allow(unused_mut)]
+    let mut content = column![
         header,
         nav_card,
         storage_card,
         java_card,
         memory_card,
-        system_card,
     ]
-    .spacing(16)
-    .max_width(780)
-    .width(Length::Fill);
+    .spacing(16);
+    #[cfg(target_os = "linux")]
+    {
+        content = content.push(gpu_card);
+    }
+    let content = content
+        .push(system_card)
+        .max_width(780)
+        .width(Length::Fill);
 
     container(
         scrollable(

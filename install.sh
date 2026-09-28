@@ -22,7 +22,11 @@ cargo build --release
 mkdir -p "$INSTALL_BIN_DIR" "$ICON_DIR" "$APPLICATIONS_DIR"
 
 echo "[${APP_NAME} Installer] Copying binary..."
-install -m 755 "$BINARY_SOURCE" "$BINARY_TARGET"
+binary_tmp="$(mktemp "${INSTALL_BIN_DIR}/.${EXECUTABLE_NAME}.XXXXXX")"
+trap 'rm -f "$binary_tmp"' EXIT
+install -m 755 "$BINARY_SOURCE" "$binary_tmp"
+mv -f "$binary_tmp" "$BINARY_TARGET"
+trap - EXIT
 
 echo "[${APP_NAME} Installer] Copying assets..."
 # Convert SVG to PNG if magick exists, otherwise copy pre-generated PNG.

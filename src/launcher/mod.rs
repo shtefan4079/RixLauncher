@@ -89,6 +89,7 @@ pub struct RixLauncher {
     pub pending_minimize: bool,
     pub extra_jvm_args: String,
     pub extra_game_args: String,
+    pub prefer_discrete_gpu: bool,
     pub local_mod_icons: std::collections::HashMap<String, iced::widget::image::Handle>,
     pub player_skins: std::collections::HashMap<String, iced::widget::image::Handle>,
     pub noise_image: iced::widget::image::Handle,
@@ -218,7 +219,14 @@ impl RixLauncher {
         let noise_pixels = generate_noise_rgba(1920, 1200);
         let noise_image = iced::widget::image::Handle::from_rgba(1920, 1200, noise_pixels);
 
-        let config_opt = load_config();
+        #[allow(unused_mut)]
+        let mut config_opt = load_config();
+        #[cfg(target_os = "linux")]
+        if let Some(config) = config_opt.as_mut() {
+            if migrate_legacy_gpu_argument(config) {
+                save_launcher_config(config);
+            }
+        }
         let game_root = config_opt
             .as_ref()
             .map(|config| config.game_root.clone())
@@ -328,6 +336,10 @@ impl RixLauncher {
             pending_minimize: false,
             extra_jvm_args,
             extra_game_args,
+            prefer_discrete_gpu: config_opt
+                .as_ref()
+                .map(|config| config.prefer_discrete_gpu)
+                .unwrap_or(false),
             local_mod_icons: std::collections::HashMap::new(),
             player_skins: std::collections::HashMap::new(),
             noise_image,
@@ -1962,6 +1974,11 @@ impl RixLauncher {
                 self.save_config();
                 Task::none()
             }
+            Message::PreferDiscreteGpuChanged(prefer_discrete_gpu) => {
+                self.prefer_discrete_gpu = prefer_discrete_gpu;
+                self.save_config();
+                Task::none()
+            }
             Message::NavLayoutChanged(layout) => {
                 self.nav_layout = layout;
                 self.save_config();
@@ -2817,6 +2834,7 @@ impl RixLauncher {
             memory_gb: self.memory_gb,
             extra_jvm_args: self.extra_jvm_args.clone(),
             extra_game_args: self.extra_game_args.clone(),
+            prefer_discrete_gpu: self.prefer_discrete_gpu,
             game_root: self.game_root.clone(),
             selected_instance_id: self.selected_instance_id,
             nav_layout: self.nav_layout,
@@ -3091,6 +3109,7 @@ impl RixLauncher {
 
         let extra_jvm = self.extra_jvm_args.clone();
         let extra_game = self.extra_game_args.clone();
+        let prefer_discrete_gpu = self.prefer_discrete_gpu;
 
         match executor::launch_instance(
             &instance,
@@ -3100,6 +3119,7 @@ impl RixLauncher {
             is_ms,
             &extra_jvm,
             &extra_game,
+            prefer_discrete_gpu,
             &java_path,
             memory,
             &game_root,
@@ -3826,6 +3846,7 @@ pub struct LauncherConfig {
     pub memory_gb: f32,
     pub extra_jvm_args: String,
     pub extra_game_args: String,
+    pub prefer_discrete_gpu: bool,
     pub game_root: String,
     pub selected_instance_id: Option<usize>,
     pub nav_layout: NavLayout,
@@ -3840,11 +3861,22 @@ impl Default for LauncherConfig {
             memory_gb: constants::DEFAULT_MEMORY_GB,
             extra_jvm_args: String::new(),
             extra_game_args: String::new(),
+            prefer_discrete_gpu: false,
             game_root: default_game_root(),
             selected_instance_id: None,
             nav_layout: NavLayout::TopBar,
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn migrate_legacy_gpu_argument(config: &mut LauncherConfig) -> bool {
+    if config.extra_game_args.trim() != "DRI_PRIME=1" {
+        return false;
+    }
+    config.extra_game_args.clear();
+    config.prefer_discrete_gpu = true;
+    true
 }
 
 pub fn load_config() -> Option<LauncherConfig> {
@@ -5879,6 +5911,30 @@ pub fn get_rixlauncher_root() -> PathBuf {
 #[cfg(test)]
 mod launcher_tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn legacy_dri_prime_game_argument_becomes_gpu_preference() {
+        let mut config: LauncherConfig =
+            serde_json::from_str(r#"{"extra_game_args":"DRI_PRIME=1"}"#).unwrap();
+        assert!(!config.prefer_discrete_gpu);
+        assert!(migrate_legacy_gpu_argument(&mut config));
+        assert!(config.prefer_discrete_gpu);
+        assert!(config.extra_game_args.is_empty());
+        assert!(!migrate_legacy_gpu_argument(&mut config));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn other_game_arguments_are_preserved_by_gpu_migration() {
+        let mut config = LauncherConfig {
+            extra_game_args: "--fullscreen DRI_PRIME=1".to_string(),
+            ..LauncherConfig::default()
+        };
+        assert!(!migrate_legacy_gpu_argument(&mut config));
+        assert_eq!(config.extra_game_args, "--fullscreen DRI_PRIME=1");
+        assert!(!config.prefer_discrete_gpu);
+    }
 
     #[test]
     fn test_required_java_major() {
