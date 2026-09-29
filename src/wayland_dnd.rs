@@ -180,6 +180,12 @@ unsafe impl Sync for WlFns {}
 
 static FNS: OnceLock<WlFns> = OnceLock::new();
 
+// libwayland's object map also contains small sentinel values for deleted
+// objects. They are not proxy pointers and must never reach wl_proxy_get_*.
+fn is_proxy_entry(value: usize) -> bool {
+    value >= 0x1000 && value & 1 == 0
+}
+
 fn fns() -> &'static WlFns {
     FNS.get_or_init(|| unsafe {
         let h = lib_handle();
@@ -321,7 +327,7 @@ unsafe fn find_iced_seat(display_ptr: *mut c_void, our_seat: *mut c_void) -> *mu
 
         for idx in 2..num_entries {
             let entry_val: usize = std::ptr::read_unaligned(data_ptr.add(idx * 8) as *const usize);
-            if entry_val == 0 || entry_val & 1 != 0 {
+            if !is_proxy_entry(entry_val) {
                 continue;
             }
 
@@ -567,7 +573,7 @@ unsafe fn hook_sctk_data_devices(
         let mut hooked = 0usize;
         for idx in 2..num_entries {
             let entry_val: usize = std::ptr::read_unaligned(data_ptr.add(idx * 8) as *const usize);
-            if entry_val == 0 || entry_val & 1 != 0 {
+            if !is_proxy_entry(entry_val) {
                 continue;
             }
 
